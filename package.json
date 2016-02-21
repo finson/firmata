@@ -1,8 +1,9 @@
 {
   "name": "firmata",
-  "description": "A library to control an arduino running firmata",
-  "version": "0.7.1-pre-2",
+  "description": "Firmata protocol implementation for programmatic interaction with Arduino and Arduino compatible development boards.",
+  "version": "0.8.4",
   "author": "Julian Gautier",
+  "license": "MIT",
   "homepage": "http://www.github.com/jgautier/firmata",
   "repository": {
     "type": "git",
@@ -19,18 +20,15 @@
     "grunt-jscs": "~2.1.0",
     "grunt-mocha-test": "~0.12.7",
     "mocha": "^2.3.x",
-    "rewire": "~2.3.4",
     "should": "^7.1.x",
     "sinon": "~1.17.1"
   },
   "dependencies": {
     "browser-serialport": "*",
     "es6-shim": "^0.33.6",
-    "semver": "^5.0.3"
+    "serialport": "^2.0.1"
   },
-  "optionalDependencies": {},
   "scripts": {
-    "test": "grunt",
-    "postinstall": "node scripts/postinstall"
+    "test": "grunt"
   }
 }

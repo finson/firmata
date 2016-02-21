@@ -1,14 +1,15 @@
-var rewire = require("rewire");
+global.IS_TEST_MODE = true;
+
 var firmata = process.env.FIRMATA_COV ?
-  rewire("../lib-cov/firmata") :
-  rewire("../lib/firmata");
-var SerialPort = require("./MockSerialPort").SerialPort;
+  require("../lib-cov/firmata") :
+  require("../lib/firmata");
+var com = require("../test/MockSerialPort");
 var Encoder7Bit = require("../lib/encoder7bit");
 var should = require("should");
 var sinon = require("sinon");
 
 var Board = firmata.Board;
-var spy;
+var SerialPort = com.SerialPort;
 
 var ANALOG_MAPPING_QUERY = 0x69;
 var ANALOG_MAPPING_RESPONSE = 0x6A;
@@ -45,14 +46,111 @@ var REPORT_DIGITAL = 0xD0;
 var REPORT_VERSION = 0xF9;
 var SAMPLING_INTERVAL = 0x7A;
 var SERVO_CONFIG = 0x70;
+var SERIAL_MESSAGE = 0x60;
+var SERIAL_CONFIG = 0x10;
+var SERIAL_WRITE = 0x20;
+var SERIAL_READ = 0x30;
+var SERIAL_REPLY = 0x40;
+var SERIAL_CLOSE = 0x50;
+var SERIAL_FLUSH = 0x60;
+var SERIAL_LISTEN = 0x70;
 var START_SYSEX = 0xF0;
 var STEPPER = 0x72;
 var STRING_DATA = 0x71;
 var SYSTEM_RESET = 0xFF;
 
 
+var sandbox = sinon.sandbox.create();
+
+describe("Board.requestPort", function() {
+
+  var response = {
+    error: null,
+    port: {
+      comName: null
+    },
+  };
+
+  beforeEach(function() {
+    sandbox.stub(com, "list", function(callback) {
+      process.nextTick(function() {
+        callback(response.error, [response.port]);
+      });
+    });
+  });
+
+  afterEach(function() {
+    sandbox.restore();
+    response.error = null;
+    response.port.comName = null;
+  });
+
+  it("can identify an acceptable port", function(done) {
+    response.port.comName = "/dev/usb.whatever";
+    should.equal(Board.isAcceptablePort(response.port), true);
+
+    response.port.comName = "/dev/ttyACM0";
+    should.equal(Board.isAcceptablePort(response.port), true);
+
+    response.port.comName = "COM0";
+    should.equal(Board.isAcceptablePort(response.port), true);
+
+    done();
+  });
+
+  it("can identify an unacceptable port", function(done) {
+    response.port.comName = "/dev/tty.Bluetooth-Incoming-Port";
+    should.equal(Board.isAcceptablePort(response.port), false);
+
+    response.port.comName = "/dev/someotherthing";
+    should.equal(Board.isAcceptablePort(response.port), false);
+
+    done();
+  });
+
+  it("calls callback with an acceptable port: usb", function(done) {
+    response.port.comName = "/dev/usb.whatever";
+
+    Board.requestPort(function(error, port) {
+      should.equal(port, response.port);
+      done();
+    });
+  });
+
+  it("calls callback with an acceptable port: acm", function(done) {
+    response.port.comName = "/dev/ttyACM0";
+
+    Board.requestPort(function(error, port) {
+      should.equal(port, response.port);
+      done();
+    });
+  });
+
+  it("calls callback with an acceptable port: com", function(done) {
+    response.port.comName = "COM0";
+
+    Board.requestPort(function(error, port) {
+      should.equal(port, response.port);
+      done();
+    });
+  });
+
+  it("doesn't call callback with an unacceptable port: Bluetooth-Incoming-Port", function(done) {
+    response.port.comName = "/dev/tty.Bluetooth-Incoming-Port";
+
+    Board.requestPort(function(error, port) {
+      should.equal(port, null);
+      should.equal(error.message, "No Acceptable Port Found");
+      done();
+    });
+  });
+
+});
+
+
 describe("board", function() {
 
+  var spy;
   var serialPort = new SerialPort("/path/to/fake/usb");
   var boardStarted = false;
   var board = new Board(serialPort, function(err) {
@@ -62,11 +160,13 @@ describe("board", function() {
 
 
   beforeEach(function() {
-    spy = sinon.spy(SerialPort);
+    spy = sandbox.spy(com, "SerialPort");
 
     board._events.length = 0;
+  });
 
-    firmata.__set__("SerialPort", spy);
+  afterEach(function() {
+    sandbox.restore();
   });
 
   it("uses serialport defaults", function(done) {
@@ -152,6 +252,34 @@ describe("board", function() {
     });
 
     serialPort.emit("error", "test error");
+  });
+
+  it("forwards close events", function(done) {
+    var serialPort = new SerialPort("/path/to/fake/usb");
+    var board = new Board(serialPort, function(err) {});
+
+    board.on("close", done);
+
+    serialPort.emit("close");
+  });
+
+  it("forwards disconnect events", function(done) {
+    var serialPort = new SerialPort("/path/to/fake/usb");
+    var board = new Board(serialPort, function(err) {});
+
+    board.on("disconnect", done);
+
+    serialPort.emit("disconnect");
+  });
+
+  it("forwards error events", function(done) {
+    var serialPort = new SerialPort("/path/to/fake/usb");
+    var board = new Board(serialPort, function(err) {});
+
+    board.on("error", done);
+
+    board.isReady = true;
+    serialPort.emit("error");
   });
 
   it("sends report version and query firmware if it hasnt received the version within the timeout", function(done) {
@@ -263,7 +391,7 @@ describe("board", function() {
   });
 
   it("Optionally call setSamplingInterval after queryfirmware", function(done) {
-    var spy = sinon.spy(Board.prototype, "setSamplingInterval");
+    var spy = sandbox.spy(Board.prototype, "setSamplingInterval");
     var serialPort = new SerialPort("/path/to/fake/usb");
     var options = {
       skipCapabilities: true,
@@ -291,7 +419,7 @@ describe("board", function() {
   });
 
   it("Does not call setSamplingInterval after queryfirmware by default", function(done) {
-    var spy = sinon.spy(Board.prototype, "setSamplingInterval");
+    var spy = sandbox.spy(Board.prototype, "setSamplingInterval");
     var serialPort = new SerialPort("/path/to/fake/usb");
     var options = {
       skipCapabilities: true,
@@ -453,7 +581,7 @@ describe("board", function() {
   });
 
   it("allows setting a valid sampling interval", function(done) {
-    var spy = sinon.spy(board.transport, "write");
+    var spy = sandbox.spy(board.transport, "write");
 
     // Valid sampling interval
     board.setSamplingInterval(20);
@@ -724,7 +852,7 @@ describe("board", function() {
   });
 
   it("should be able to receive an i2c reply", function(done) {
-    var handler = sinon.spy(function() {});
+    var handler = sandbox.spy(function() {});
     board.i2cConfig(1);
     board.sendI2CReadRequest(0x68, 4, handler);
     should.deepEqual(serialPort.lastWrite, [START_SYSEX, I2C_REQUEST, 0x68, 1 << 3, 4 & 0x7F, (4 >> 7) & 0x7F, END_SYSEX]);
@@ -802,7 +930,18 @@ describe("board", function() {
     serialPort.emit("data", [END_SYSEX]);
   });
 
+  it("cannot pingRead without PingFirmata", function(done) {
+    should.throws(function() {
+      board.pingRead({
+        pin: 3
+      });
+    });
+
+    done();
+  });
+
   it("can send a pingRead without a timeout and without a pulse out", function(done) {
+    board.pins[3].supportedModes.push(PING_READ);
     board.pingRead({
       pin: 3,
       value: board.HIGH,
@@ -1147,8 +1286,65 @@ describe("board", function() {
     done();
   });
 
+  it("can configure a servo pwm range, with object", function(done) {
+    board.servoConfig({
+      pin: 3,
+      min: 1000,
+      max: 2000,
+    });
+    serialPort.lastWrite[0].should.equal(START_SYSEX);
+    serialPort.lastWrite[1].should.equal(SERVO_CONFIG);
+    serialPort.lastWrite[2].should.equal(0x03);
+
+    serialPort.lastWrite[3].should.equal(1000 & 0x7F);
+    serialPort.lastWrite[4].should.equal((1000 >> 7) & 0x7F);
+
+    serialPort.lastWrite[5].should.equal(2000 & 0x7F);
+    serialPort.lastWrite[6].should.equal((2000 >> 7) & 0x7F);
+
+    done();
+  });
+
+  it("will throw if servoConfig is missing any parameters", function(done) {
+
+    should.throws(function() {
+      board.servoConfig();
+    });
+
+    should.throws(function() {
+      board.servoConfig(3, 1000);
+    });
+
+    should.throws(function() {
+      board.servoConfig({
+        min: 1000,
+        max: 2000,
+      });
+    });
+
+    should.throws(function() {
+      board.servoConfig({
+        pin: 3,
+        max: 2000,
+      });
+    });
+
+    should.throws(function() {
+      board.servoConfig({
+        pin: 3,
+        min: 1000,
+      });
+    });
+
+    should.throws(function() {
+      board.servoConfig({});
+    });
+
+    done();
+  });
+
   it("has an i2cWrite method, that writes a data array", function(done) {
-    var spy = sinon.spy(serialPort, "write");
+    var spy = sandbox.spy(serialPort, "write");
 
     board.i2cConfig(0);
     board.i2cWrite(0x53, [1, 2]);
@@ -1160,7 +1356,7 @@ describe("board", function() {
   });
 
   it("has an i2cWrite method, that writes a byte", function(done) {
-    var spy = sinon.spy(serialPort, "write");
+    var spy = sandbox.spy(serialPort, "write");
 
     board.i2cConfig(0);
     board.i2cWrite(0x53, 1);
@@ -1172,7 +1368,7 @@ describe("board", function() {
   });
 
   it("has an i2cWrite method, that writes a data array to a register", function(done) {
-    var spy = sinon.spy(serialPort, "write");
+    var spy = sandbox.spy(serialPort, "write");
 
     board.i2cConfig(0);
     board.i2cWrite(0x53, 0xB2, [1, 2]);
@@ -1184,7 +1380,7 @@ describe("board", function() {
   });
 
   it("has an i2cWrite method, that writes a data byte to a register", function(done) {
-    var spy = sinon.spy(serialPort, "write");
+    var spy = sandbox.spy(serialPort, "write");
 
     board.i2cConfig(0);
     board.i2cWrite(0x53, 0xB2, 1);
@@ -1196,7 +1392,7 @@ describe("board", function() {
   });
 
   it("has an i2cWriteReg method, that writes a data byte to a register", function(done) {
-    var spy = sinon.spy(serialPort, "write");
+    var spy = sandbox.spy(serialPort, "write");
 
     board.i2cConfig(0);
     board.i2cWrite(0x53, 0xB2, 1);
@@ -1208,7 +1404,7 @@ describe("board", function() {
   });
 
   it("has an i2cRead method that reads continuously", function(done) {
-    var handler = sinon.spy(function() {});
+    var handler = sandbox.spy(function() {});
 
     board.i2cConfig(0);
     board.i2cRead(0x53, 0x04, handler);
@@ -1230,7 +1426,7 @@ describe("board", function() {
   });
 
   it("has an i2cRead method that reads a register continuously", function(done) {
-    var handler = sinon.spy(function() {});
+    var handler = sandbox.spy(function() {});
 
     board.i2cConfig(0);
     board.i2cRead(0x53, 0xB2, 0x04, handler);
@@ -1253,7 +1449,7 @@ describe("board", function() {
 
 
   it("has an i2cRead method that reads continuously", function(done) {
-    var handler = sinon.spy(function() {});
+    var handler = sandbox.spy(function() {});
 
     board.i2cConfig(0);
     board.i2cRead(0x53, 0x04, handler);
@@ -1275,7 +1471,7 @@ describe("board", function() {
   });
 
   it("has an i2cReadOnce method that reads a register once", function(done) {
-    var handler = sinon.spy(function() {});
+    var handler = sandbox.spy(function() {});
 
     board.i2cConfig(0);
     board.i2cReadOnce(0x53, 0xB2, 0x04, handler);
@@ -1293,7 +1489,7 @@ describe("board", function() {
   });
 
   it("has an i2cReadOnce method that reads a register once", function(done) {
-    var handler = sinon.spy(function() {});
+    var handler = sandbox.spy(function() {});
 
     board.i2cConfig(0);
     board.i2cReadOnce(0x53, 0xB2, 0x04, handler);
@@ -1309,4 +1505,189 @@ describe("board", function() {
     should.equal(handler.getCall(0).args[0].length, 4);
     done();
   });
+
+  it("can configure a software serial port", function(done) {
+    board.serialConfig({
+      portId: 0x08,
+      baud: 9600,
+      rxPin: 10,
+      txPin: 11
+    });
+    serialPort.lastWrite[0].should.equal(START_SYSEX);
+    serialPort.lastWrite[2].should.equal(SERIAL_CONFIG | 0x08);
+
+    serialPort.lastWrite[3].should.equal(9600 & 0x007F);
+    serialPort.lastWrite[4].should.equal((9600 >> 7) & 0x007F);
+    serialPort.lastWrite[5].should.equal((9600 >> 14) & 0x007F);
+
+    serialPort.lastWrite[6].should.equal(10);
+    serialPort.lastWrite[7].should.equal(11);
+
+    serialPort.lastWrite[8].should.equal(END_SYSEX);
+    done();
+  });
+
+  it("can configure a hardware serial port", function(done) {
+    board.serialConfig({
+      portId: 0x01,
+      buad: 57600
+    });
+    serialPort.lastWrite[2].should.equal(SERIAL_CONFIG | 0x01);
+
+    serialPort.lastWrite[3].should.equal(57600 & 0x007F);
+    serialPort.lastWrite[4].should.equal((57600 >> 7) & 0x007F);
+    serialPort.lastWrite[5].should.equal((57600 >> 14) & 0x007F);
+
+    serialPort.lastWrite[6].should.equal(END_SYSEX);
+    done();
+  });
+
+  it("throws an error if no serial port id is passed", function(done) {
+    should.throws(function() {
+      board.serialConfig({
+        buad: 57600
+      });
+    });
+    done();
+  });
+
+  it("throws an error if both RX and TX pins are not defined when using Software Serial", function(done) {
+    // throw error if both pins are not specified
+    should.throws(function() {
+      board.serialConfig({
+        portId: 8,
+        buad: 57600
+      });
+    });
+
+    // throw error if only one serial pin is specified
+    should.throws(function() {
+      board.serialConfig({
+        portId: 8,
+        buad: 57600,
+        txPin: 0
+      });
+    });
+    done();
+  });
+
+  it("can write a single byte to a serial port", function(done) {
+    board.serialWrite(0x08, [1]);
+    serialPort.lastWrite[2].should.equal(SERIAL_WRITE | 0x08);
+    serialPort.lastWrite[3].should.equal(1 & 0x7F);
+    serialPort.lastWrite[4].should.equal((1 >> 7) & 0x7F);
+    serialPort.lastWrite[5].should.equal(END_SYSEX);
+    done();
+  });
+
+  it("can write a byte array to a serial port", function(done) {
+    board.serialWrite(0x08, [252, 253, 254]);
+    serialPort.lastWrite[2].should.equal(SERIAL_WRITE | 0x08);
+    serialPort.lastWrite[3].should.equal(252 & 0x7F);
+    serialPort.lastWrite[4].should.equal((252 >> 7) & 0x7F);
+    serialPort.lastWrite[7].should.equal(254 & 0x7F);
+    serialPort.lastWrite[8].should.equal((254 >> 7) & 0x7F);
+    serialPort.lastWrite[9].should.equal(END_SYSEX);
+    done();
+  });
+
+  it("has a serialRead method that sets READ_CONTINUOUS mode", function(done) {
+    var handler = sandbox.spy(function() {});
+    board.serialRead(0x08, handler);
+
+    serialPort.lastWrite[2].should.equal(SERIAL_READ | 0x08);
+    serialPort.lastWrite[3].should.equal(0);
+    serialPort.lastWrite[4].should.equal(END_SYSEX);
+
+    done();
+  });
+
+  it("has a serialRead method that reads continuously", function(done) {
+    var inBytes = [
+      242 & 0x7F,
+      (242 >> 7) & 0x7F,
+      243 & 0x7F,
+      (243 >> 7) & 0x7F,
+      244 & 0x7F,
+      (244 >> 7) & 0x7F,
+    ];
+
+    var handler = sandbox.spy(function() {});
+    board.serialRead(0x08, handler);
+
+    for (var i = 0; i < 5; i++) {
+      serialPort.emit("data", [
+        START_SYSEX,
+        SERIAL_MESSAGE,
+        SERIAL_REPLY | 0x08,
+        inBytes[0],
+        inBytes[1],
+        inBytes[2],
+        inBytes[3],
+        inBytes[4],
+        inBytes[5],
+        END_SYSEX
+      ]);
+    }
+
+    should.equal(handler.callCount, 5);
+    should.equal(handler.getCall(0).args[0].length, 3);
+    should.equal(handler.getCall(0).args[0][0], 242);
+    should.equal(handler.getCall(0).args[0][2], 244);
+    should.equal(handler.getCall(1).args[0].length, 3);
+    should.equal(handler.getCall(2).args[0].length, 3);
+    should.equal(handler.getCall(3).args[0].length, 3);
+    should.equal(handler.getCall(4).args[0].length, 3);
+    done();
+  });
+
+  it("serialRead accepts an optional maxBytesToRead parameter", function(done) {
+    var maxBytesToRead = 4;
+    var handler = sandbox.spy(function () {});
+    board.serialRead(0x08, maxBytesToRead, handler);
+
+    serialPort.lastWrite[4].should.equal(4);
+    serialPort.lastWrite[5].should.equal(0);
+    serialPort.lastWrite[6].should.equal(END_SYSEX);
+    done();
+  });
+
+  it("has a serialStop method that sets STOP_READING mode", function(done) {
+    board.serialStop(0x08);
+    serialPort.lastWrite[2].should.equal(SERIAL_READ | 0x08);
+    serialPort.lastWrite[3].should.equal(1);
+    serialPort.lastWrite[4].should.equal(END_SYSEX);
+    done();
+  });
+
+  it("has a serialClose method", function(done) {
+    board.serialClose(0x09);
+    serialPort.lastWrite[2].should.equal(SERIAL_CLOSE | 0x09);
+    done();
+  });
+
+  it("has a serialFlush method", function(done) {
+    board.serialFlush(0x02);
+    serialPort.lastWrite[2].should.equal(SERIAL_FLUSH | 0x02);
+    done();
+  });
+
+  it("has a serialListen method that switches software serial port", function(done) {
+    var spy = sandbox.spy(serialPort, "write");
+    board.serialListen(0x08);
+    serialPort.lastWrite[2].should.equal(SERIAL_LISTEN | 0x08);
+    serialPort.lastWrite[3].should.equal(END_SYSEX);
+    should.equal(spy.callCount, 1);
+    spy.restore();
+    done();
+  });
+
+  it("should not send a SERIAL_LISTEN message for a hardware serial port", function(done) {
+    var spy = sandbox.spy(serialPort, "write");
+    board.serialListen(0x01);
+    should.equal(spy.callCount, 0);
+    spy.restore();
+    done();
+  });
+
 });
