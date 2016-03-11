@@ -139,23 +139,25 @@ If you run *firmata* from the command line it will prompt you for the serial por
   
 ### I2C
   
-- `i2cConfig(options)` 
-
-  Configure and enable I2C, provide no options or delay. Required to enable I2C communication. 
-  ```js
-  options {
-    delay: Number in μs
-  }
-  ```
-
 - `i2cConfig(delay)` 
 
   Configure and enable I2C, optionally provide a value in μs to delay between reads (defaults to `0`). Required to enable I2C communication. 
 
 - `i2cConfig(options)` 
 
-  Configure and enable I2C, optionally provide an object that contains a `delay` property whose value is a number in μs to delay between reads. Required to enable I2C communication. 
+  Configure and enable I2C, optionally provide an object that contains properties to use for  whose value is a number in μs to delay between reads. Required to enable I2C communication. 
+  
+  | Option  | Description | Default | Required? |
+  |---------|-------------|---------|-----------|
+  | delay   | µS delay between setting a register and requesting bytes from the register | 0 | No |
+  | address | Valid I2C address, used when there are specific configurations for a given address | none | No |
+  | settings | An object of properties to associate with a given address. | none | No |
 
+
+  | Setting | Description | Default | Required? |
+  |---------|-------------|---------|-----------|
+  | stopTX  | Stop transmission after setting a register to read from. Setting to `false` will keep the transmission connection active. An example of the `false` behavior is the [MMA8452](https://github.com/sparkfun/MMA8452_Accelerometer/blob/master/Libraries/Arduino/src/SparkFun_MMA8452Q.cpp#L242-L270) | true | No |
+  
 
 - `i2cWrite(address, [...bytes])` 
 
@@ -305,7 +307,32 @@ If you run *firmata* from the command line it will prompt you for the serial por
   **For SoftwareSerial only**. Only a single SoftwareSerial instance can read data at a time. Call this method to set this port to be the reading port in the case there are multiple SoftwareSerial instances.
 
 
+### Sysex
+
+- `board.sysexResponse(commandByte, handler)` 
   
+  Allow user code to handle arbitrary sysex responses. `commandByte` must be associated with some message that's expected from the slave device. The `handler` is called with an array of _raw_ data from the slave. Data decoding must be done within the handler itself.
+  
+  - Use `Board.decode(data)` to extract useful values from the incoming response data.
+ 
+- `board.sysexCommand(message)`
+  
+  Allow user code to send arbitrary sysex messages. The `message` array is expected to be all necessary bytes between START_SYSEX and END_SYSEX (non-inclusive). It will be assumed that the data in the message array is already encoded as 2 7-bit bytes LSB first.
+
+  - Use `Board.encode(data)` to encode data values into an array of 7 bit byte pairs.
+
+
+### Encode/Decode
+
+- `Board.encode(data)`
+  
+  Encode an array of 8 bit data values as two 7 bit byte pairs (each). (LSB first)
+
+- `Board.decode(data)`
+  
+  Decode an array of 7 bit byte pairs into a an array of 8 bit data values. (LSB first)
+
+
 ## License 
 
 (The MIT License)
